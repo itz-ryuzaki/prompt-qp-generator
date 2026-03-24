@@ -887,8 +887,13 @@ input.mini  { width: 66px; padding: 7px 10px; font-size: 0.92rem; text-align: ce
 
 </main>
 
-<div class="loading-overlay" id="loader"><div class="spinner"></div><div class="loading-text" id="loaderText">Processing…</div></div>
+<div class="loading-overlay" id="loader"><div class="spinner"></div><div class="loading-text" id="loaderText">Processing...</div></div>
 <div class="toast" id="toast"></div>
+<div id="corsWarning" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1a1030;border-top:2px solid var(--accent);padding:14px 20px;z-index:500;font-size:0.88rem;color:#ccc;align-items:center;gap:14px;flex-wrap:wrap">
+  <span style="font-size:1.2rem">&#9888;&#65039;</span>
+  <span><strong style="color:#fff">Gemini API is blocked in this preview.</strong> Download the HTML file and open it directly in Chrome, Firefox, or Edge.</span>
+  <button onclick="document.getElementById('corsWarning').style.display='none'" style="margin-left:auto;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#fff;padding:6px 14px;border-radius:7px;cursor:pointer;font-size:0.82rem;white-space:nowrap">Dismiss</button>
+</div>
 
 <script>
 /* ══ STATE ══ */
@@ -1169,27 +1174,59 @@ Produce the <span class="kw">complete, print-ready question paper only</span>. S
 <span class="cmt">Do not include answer keys, explanations, or preamble — output the paper only.</span>`;
 }
 
-/* ══ GEMINI API ══ */
-const GEMINI_KEY = 'AIzaSyA4d65fGnnm_4j1IUuYqh4EpZ_EJicbReE';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`;
+/* ══ GROQ API ══ */
+const GROQ_KEY = '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';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 async function callGemini(prompt) {
-  const res = await fetch(GEMINI_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.85, maxOutputTokens: 8192 }
-    })
+  const body = JSON.stringify({
+    model: 'llama-3.3-70b-versatile',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.85,
+    max_tokens: 8192
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `API error ${res.status}`);
+  try {
+    const res = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + GROQ_KEY
+      },
+      body
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || 'API error ' + res.status);
+    }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  } catch(e) {
+    if (e.message && e.message.includes('API error')) throw e;
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', GROQ_URL, true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('Authorization', 'Bearer ' + GROQ_KEY);
+      xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const d = JSON.parse(xhr.responseText);
+            resolve(d.choices?.[0]?.message?.content || '');
+          } catch(pe) { reject(new Error('Failed to parse response')); }
+        } else {
+          try {
+            const errD = JSON.parse(xhr.responseText);
+            reject(new Error(errD?.error?.message || 'API error ' + xhr.status));
+          } catch(_) { reject(new Error('API error ' + xhr.status)); }
+        }
+      };
+      xhr.onerror = () => reject(new Error('Network error — open this file directly in Chrome/Firefox/Edge.'));
+      xhr.ontimeout = () => reject(new Error('Request timed out — please try again.'));
+      xhr.timeout = 60000;
+      xhr.send(body);
+    });
   }
-  const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
-
 function buildGeminiPrompt() {
   const g  = id => document.getElementById(id).value;
   const r  = name => document.querySelector(`input[name="${name}"]:checked`).value;
@@ -1267,7 +1304,11 @@ async function generatePaper() {
     goStep(3);
   } catch(err) {
     hideLoader();
-    showToast('⚠️ ' + (err.message || 'Gemini API error — try again'));
+    const msg = err.message || 'Gemini API error';
+    showToast('⚠️ ' + msg);
+    if (msg.toLowerCase().includes('network') || msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('failed')) {
+      document.getElementById('corsWarning').style.display = 'flex';
+    }
     console.error(err);
   }
 }
