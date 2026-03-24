@@ -1169,49 +1169,133 @@ Produce the <span class="kw">complete, print-ready question paper only</span>. S
 <span class="cmt">Do not include answer keys, explanations, or preamble — output the paper only.</span>`;
 }
 
-/* ══ PAPER ══ */
-function generatePaper() {
-  showLoader('Generating your question paper…');
-  const subject = document.getElementById('subject').value;
-  const marks   = parseInt(document.getElementById('marks').value);
-  setTimeout(() => {
-    paperData = buildPaperData(subject, marks);
-    renderPaper(paperData); hideLoader(); goStep(3);
-  }, 1900);
+/* ══ GEMINI API ══ */
+const GEMINI_KEY = 'AIzaSyA4d65fGnnm_4j1IUuYqh4EpZ_EJicbReE';
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`;
+
+async function callGemini(prompt) {
+  const res = await fetch(GEMINI_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.85, maxOutputTokens: 8192 }
+    })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `API error ${res.status}`);
+  }
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
-function buildPaperData(subject, totalMarks) {
-  const t = i => topics[i % topics.length]?.name || 'General';
+function buildGeminiPrompt() {
+  const g  = id => document.getElementById(id).value;
+  const r  = name => document.querySelector(`input[name="${name}"]:checked`).value;
+  const subject   = g('subject');
+  const mcqMarks  = g('mcqMarks');
+  const shortMarks= g('shortMarks');
+  const longMarks = g('longMarks');
+  const easy      = g('easy'), medium = g('medium'), hard = g('hard');
+  const blooms    = getSelectedBlooms().join(', ');
+  const totalW    = topics.reduce((s, t) => s + t.weight, 0) || 1;
+  const topicList = topics.map(t => `${t.name}${t.sub ? ' (' + t.sub + ')' : ''} [weight:${Math.round(t.weight/totalW*100)}%]`).join(', ');
+  const numMCQ    = 10, numShort = 5, numLong = 4;
 
-  const mcqs = [
-    { q: 'Which data structure uses LIFO (Last In, First Out) ordering?', opts: ['A. Queue', 'B. Stack', 'C. Deque', 'D. Heap'], bloom: 'Understand', diff: 'easy', marks: 1, topic: t(5) },
-    { q: 'What is the worst-case time complexity of QuickSort?', opts: ['A. O(n log n)', 'B. O(n²)', 'C. O(n)', 'D. O(log n)'], bloom: 'Apply', diff: 'medium', marks: 1, topic: t(3) },
-    { q: 'In-order traversal of a BST produces elements in _____ order.', opts: ['A. Random', 'B. Reverse sorted', 'C. Sorted ascending', 'D. Level order'], bloom: 'Remember', diff: 'easy', marks: 1, topic: t(2) },
-    { q: "Which algorithm finds single-source shortest path in a weighted graph?", opts: ["A. BFS", "B. DFS", "C. Dijkstra's", "D. Prim's"], bloom: 'Apply', diff: 'medium', marks: 1, topic: t(4) },
-    { q: 'A node in a singly linked list stores _____.', opts: ['A. Only data', 'B. Only next pointer', 'C. Data and next pointer', 'D. Index, data, and pointer'], bloom: 'Understand', diff: 'easy', marks: 1, topic: t(1) },
-    { q: 'The height of a complete binary tree with n nodes is _____.', opts: ['A. O(n)', 'B. O(log n)', 'C. O(n log n)', 'D. O(√n)'], bloom: 'Analyze', diff: 'medium', marks: 1, topic: t(2) },
-    { q: 'Which sorting algorithm performs best on nearly-sorted input?', opts: ['A. Selection Sort', 'B. Heap Sort', 'C. Merge Sort', 'D. Insertion Sort'], bloom: 'Analyze', diff: 'medium', marks: 1, topic: t(3) },
-    { q: 'DFS internally uses which data structure?', opts: ['A. Queue', 'B. Stack or call stack', 'C. Heap', 'D. Array'], bloom: 'Apply', diff: 'easy', marks: 1, topic: t(4) },
-    { q: 'Which array operation has O(1) average time complexity?', opts: ['A. Search (unsorted)', 'B. Insert at beginning', 'C. Access by index', 'D. Delete from middle'], bloom: 'Understand', diff: 'easy', marks: 1, topic: t(0) },
-    { q: 'What is the space complexity of Merge Sort?', opts: ['A. O(1)', 'B. O(log n)', 'C. O(n)', 'D. O(n log n)'], bloom: 'Analyze', diff: 'hard', marks: 1, topic: t(3) },
-  ];
+  return `You are an expert academic examiner. Generate a question paper for the subject: "${subject}".
 
-  const shorts = [
-    { q: 'Differentiate between a singly linked list and a doubly linked list. State one practical use case for each.', bloom: 'Analyze', diff: 'medium', marks: 3, topic: t(1) },
-    { q: 'Explain recursion using the example of computing n!. Write its recurrence relation and identify the base case.', bloom: 'Apply', diff: 'medium', marks: 3, topic: t(0) },
-    { q: 'What is a max-heap? State its two key properties and explain how it differs from a Binary Search Tree.', bloom: 'Understand', diff: 'medium', marks: 3, topic: t(2) },
-    { q: 'Describe BFS with a small graph example. In which class of problems is BFS preferred over DFS?', bloom: 'Apply', diff: 'medium', marks: 3, topic: t(4) },
-    { q: 'What is stack overflow in the context of recursion? Give a concrete example and explain how to prevent it.', bloom: 'Understand', diff: 'easy', marks: 3, topic: t(5) },
-  ];
+Topics to cover (distribute questions proportionally by weight): ${topicList}
 
-  const longs = [
-    { q: '(a) Explain the Merge Sort algorithm with a complete step-by-step trace on: [38, 27, 43, 3, 9, 82, 10].\n(b) Derive the time complexity for best, average, and worst cases with mathematical proof.\n(c) Compare Merge Sort and Quick Sort — when is each algorithm preferable? Justify with examples.', bloom: 'Evaluate', diff: 'hard', marks: 10, topic: t(3) },
-    { q: '(a) Define a Binary Search Tree (BST). Write algorithms for insertion and deletion operations.\n(b) Construct a BST by inserting: 50, 30, 70, 20, 40, 60, 80. Draw the resulting tree.\n(c) Perform and show in-order, pre-order, and post-order traversals on your constructed BST.', bloom: 'Apply', diff: 'hard', marks: 10, topic: t(2) },
-    { q: "(a) Explain Dijkstra's algorithm. Trace it on a weighted graph with 5 nodes and 7 edges.\n(b) Show each relaxation step in a table and compute shortest distances from source to all nodes.\n(c) State two limitations of Dijkstra's algorithm and name the algorithm that addresses each.", bloom: 'Analyze', diff: 'hard', marks: 10, topic: t(4) },
-    { q: '(a) Implement a stack using a singly linked list with push, pop, and peek operations.\n(b) Use your implementation to evaluate the postfix expression: 5 1 2 + 4 * + 3 − (show each step).\n(c) Compare linked-list stack vs. array-based stack: advantages, disadvantages, and use cases.', bloom: 'Apply', diff: 'hard', marks: 10, topic: t(5) },
-  ];
+Requirements:
+- Section A: ${numMCQ} MCQs, ${mcqMarks} mark each
+- Section B: ${numShort} Short Answer questions, ${shortMarks} marks each
+- Section C: ${numLong} Long Answer questions, ${longMarks} marks each
+- Difficulty mix: Easy ${easy}%, Medium ${medium}%, Hard ${hard}%
+- Bloom's levels to include: ${blooms}
+- Every question MUST be specific to "${subject}" and its listed topics
+- MCQ options must be labeled A, B, C, D
+- Long answer questions must have sub-parts (a), (b), (c)
 
-  return { subject, totalMarks, topics: topics.map(t => t.name), mcqs, shorts, longs };
+Return ONLY valid JSON (no markdown, no backticks, no explanation) in this exact structure:
+{
+  "mcqs": [
+    { "q": "question text", "opts": ["A. ...", "B. ...", "C. ...", "D. ..."], "bloom": "level", "diff": "easy|medium|hard", "marks": ${mcqMarks}, "topic": "topic name" }
+  ],
+  "shorts": [
+    { "q": "question text", "bloom": "level", "diff": "easy|medium|hard", "marks": ${shortMarks}, "topic": "topic name" }
+  ],
+  "longs": [
+    { "q": "(a) ... \\n(b) ... \\n(c) ...", "bloom": "level", "diff": "hard", "marks": ${longMarks}, "topic": "topic name" }
+  ]
+}`;
+}
+
+/* ══ PAPER ══ */
+async function generatePaper() {
+  showLoader('Sending prompt to Gemini AI…');
+  try {
+    const prompt = buildGeminiPrompt();
+    let raw = await callGemini(prompt);
+
+    // Strip markdown code fences if present
+    raw = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch(e) {
+      // Try to extract JSON object from response
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('Could not parse AI response as JSON. Please try again.');
+      parsed = JSON.parse(match[0]);
+    }
+
+    const subject    = document.getElementById('subject').value;
+    const totalMarks = parseInt(document.getElementById('marks').value);
+    paperData = {
+      subject,
+      totalMarks,
+      topics: topics.map(t => t.name),
+      mcqs:   parsed.mcqs   || [],
+      shorts: parsed.shorts || [],
+      longs:  parsed.longs  || []
+    };
+
+    renderPaper(paperData);
+    hideLoader();
+    goStep(3);
+  } catch(err) {
+    hideLoader();
+    showToast('⚠️ ' + (err.message || 'Gemini API error — try again'));
+    console.error(err);
+  }
+}
+
+async function regeneratePaper() {
+  showLoader('Generating new variation with Gemini…');
+  try {
+    const prompt = buildGeminiPrompt();
+    let raw = await callGemini(prompt);
+    raw = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch(e) {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('Could not parse response. Please try again.');
+      parsed = JSON.parse(match[0]);
+    }
+    const subject    = document.getElementById('subject').value;
+    const totalMarks = parseInt(document.getElementById('marks').value);
+    paperData = { subject, totalMarks, topics: topics.map(t => t.name),
+      mcqs: parsed.mcqs || [], shorts: parsed.shorts || [], longs: parsed.longs || [] };
+    renderPaper(paperData);
+    hideLoader();
+    showToast('✓ New variation generated');
+  } catch(err) {
+    hideLoader();
+    showToast('⚠️ ' + (err.message || 'Gemini API error'));
+  }
 }
 
 function renderPaper(data) {
